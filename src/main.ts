@@ -34,7 +34,7 @@ async function bootstrap() {
   app.use(express.static(webDistPath));
   // 非API路径返回index.html（支持React Router前端路由）
   const expressApp = app.getHttpAdapter().getInstance();
-  expressApp.get('*', (req: any, res: any, next: any) => {
+  expressApp.get('/*', (req: any, res: any, next: any) => {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(join(webDistPath, 'index.html'));
   });
