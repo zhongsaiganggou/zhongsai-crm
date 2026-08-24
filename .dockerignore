@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.git
+.env
+outputs
+work
+*.log
+.env*
+!apps/web/.env.example

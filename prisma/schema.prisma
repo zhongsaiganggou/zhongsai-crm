@@ -1,0 +1,411 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  SALES
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ChannelCapability {
+  WECHAT
+  WHATSAPP
+  PHONE
+  EMAIL
+}
+
+enum LeadSource {
+  META
+  TIKTOK
+  MANUAL
+}
+
+enum ProjectType {
+  INDUSTRIAL_PLANT
+  WAREHOUSE
+  STEEL_BUILDING
+  OTHER
+}
+
+enum PurchaseTimeline {
+  WITHIN_1_MONTH
+  ONE_TO_THREE_MONTHS
+  THREE_TO_SIX_MONTHS
+  OVER_SIX_MONTHS
+  UNKNOWN
+}
+
+enum AssignmentState {
+  UNASSIGNED
+  ASSIGNED
+  REVIEW_REQUIRED
+}
+
+enum ContactAvailability {
+  AVAILABLE
+  PARTIAL
+  NONE
+  INVALID
+}
+
+enum LeadQualityFlag {
+  NORMAL
+  NO_CONTACT
+  INCOMPLETE_CONTACT
+  SUSPECTED_SPAM
+  POSSIBLE_DUPLICATE
+  CONFIRMED_INVALID
+}
+
+enum InvalidReason {
+  SPAM
+  FAKE_INFORMATION
+  NO_CONTACT_INFORMATION
+  INVALID_CONTACT_INFORMATION
+  DUPLICATE
+  WRONG_INDUSTRY
+  NO_PURCHASE_INTENT
+  TEST_SUBMISSION
+  OTHER
+}
+
+enum TagScope {
+  PERSONAL
+  SHARED
+}
+
+enum CommunicationMethod {
+  WECHAT
+  WHATSAPP
+  PHONE
+  EMAIL
+  REVIEW
+}
+
+enum AssignmentMethod {
+  AUTOMATIC
+  MANUAL
+}
+
+enum IntegrationProvider {
+  META
+  TIKTOK
+}
+
+enum IntegrationStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  IGNORED
+}
+
+model User {
+  id                  String              @id @default(uuid()) @db.Uuid
+  name                String              @db.VarChar(100)
+  mobile              String              @unique @db.VarChar(32)
+  email               String?             @unique @db.VarChar(255)
+  passwordHash        String              @map("password_hash") @db.VarChar(255)
+  role                UserRole
+  status              UserStatus          @default(ACTIVE)
+  channelCapabilities ChannelCapability[] @default([]) @map("channel_capabilities")
+  lastLoginAt         DateTime?           @map("last_login_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  assignedLeads   Lead[]              @relation("CurrentAssignee")
+  createdLeads    Lead[]              @relation("LeadCreator")
+  reviewedLeads   Lead[]              @relation("LeadReviewer")
+  followUps       FollowUpRecord[]
+  statusChanges   LeadStatusHistory[]
+  assignmentsFrom LeadAssignment[]    @relation("AssignmentFrom")
+  assignmentsTo   LeadAssignment[]    @relation("AssignmentTo")
+  assignmentsMade LeadAssignment[]    @relation("AssignmentActor")
+  tags            Tag[]
+  leadTags        LeadTag[]
+  refreshTokens   RefreshToken[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model LeadStatus {
+  id         String   @id @default(uuid()) @db.Uuid
+  code       String   @unique @db.VarChar(50)
+  nameZh     String   @map("name_zh") @db.VarChar(50)
+  color      String   @db.VarChar(20)
+  sortOrder  Int      @map("sort_order")
+  isTerminal Boolean  @default(false) @map("is_terminal")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  currentLeads Lead[]
+  fromHistory  LeadStatusHistory[] @relation("StatusFrom")
+  toHistory    LeadStatusHistory[] @relation("StatusTo")
+
+  @@map("lead_statuses")
+}
+
+model Lead {
+  id                   String               @id @default(uuid()) @db.Uuid
+  leadNumber           String               @unique @map("lead_number") @db.VarChar(32)
+  name                 String?              @db.VarChar(200)
+  countryCode          String?              @map("country_code") @db.VarChar(2)
+  countryName          String?              @map("country_name") @db.VarChar(100)
+  city                 String?              @db.VarChar(100)
+  companyName          String?              @map("company_name") @db.VarChar(200)
+  jobTitle             String?              @map("job_title") @db.VarChar(150)
+  wechatId             String?              @map("wechat_id") @db.VarChar(100)
+  whatsappRaw          String?              @map("whatsapp_raw") @db.VarChar(100)
+  whatsappNormalized   String?              @map("whatsapp_normalized") @db.VarChar(32)
+  phoneRaw             String?              @map("phone_raw") @db.VarChar(100)
+  phoneNormalized      String?              @map("phone_normalized") @db.VarChar(32)
+  email                String?              @db.VarChar(255)
+  emailNormalized      String?              @map("email_normalized") @db.VarChar(255)
+  preferredChannel     CommunicationMethod? @map("preferred_channel")
+  contactAvailability  ContactAvailability  @default(NONE) @map("contact_availability")
+  projectType          ProjectType?         @map("project_type")
+  projectDescription   String?              @map("project_description") @db.Text
+  purchaseTimeline     PurchaseTimeline?    @map("purchase_timeline")
+  expectedPurchaseDate DateTime?            @map("expected_purchase_date") @db.Date
+  estimatedBudget      Decimal?             @map("estimated_budget") @db.Decimal(18, 2)
+  budgetCurrency       String?              @map("budget_currency") @db.VarChar(3)
+  remark               String?              @db.Text
+  sourceType           LeadSource           @map("source_type")
+  currentStatusId      String               @map("current_status_id") @db.Uuid
+  assignedUserId       String?              @map("assigned_user_id") @db.Uuid
+  assignmentState      AssignmentState      @default(UNASSIGNED) @map("assignment_state")
+  qualityFlag          LeadQualityFlag      @default(NORMAL) @map("quality_flag")
+  qualityScore         Int?                 @map("quality_score")
+  requiresReview       Boolean              @default(false) @map("requires_review")
+  invalidReasonCode    InvalidReason?       @map("invalid_reason_code")
+  invalidReasonNote    String?              @map("invalid_reason_note") @db.Text
+  reviewedById         String?              @map("reviewed_by_id") @db.Uuid
+  reviewedAt           DateTime?            @map("reviewed_at")
+  firstContactedAt     DateTime?            @map("first_contacted_at")
+  lastFollowedUpAt     DateTime?            @map("last_followed_up_at")
+  nextFollowUpAt       DateTime?            @map("next_follow_up_at")
+  wonAt                DateTime?            @map("won_at")
+  lostReason           String?              @map("lost_reason") @db.Text
+  createdById          String?              @map("created_by_id") @db.Uuid
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  archivedAt           DateTime?            @map("archived_at")
+
+  currentStatus LeadStatus          @relation(fields: [currentStatusId], references: [id])
+  assignedUser  User?               @relation("CurrentAssignee", fields: [assignedUserId], references: [id])
+  createdBy     User?               @relation("LeadCreator", fields: [createdById], references: [id])
+  reviewedBy    User?               @relation("LeadReviewer", fields: [reviewedById], references: [id])
+  attributions  LeadAttribution[]
+  followUps     FollowUpRecord[]
+  assignments   LeadAssignment[]
+  statusHistory LeadStatusHistory[]
+  tags          LeadTag[]
+
+  @@index([assignedUserId, currentStatusId])
+  @@index([sourceType, createdAt])
+  @@index([countryCode])
+  @@index([nextFollowUpAt])
+  @@index([qualityFlag, requiresReview])
+  @@index([phoneNormalized])
+  @@index([whatsappNormalized])
+  @@index([emailNormalized])
+  @@map("leads")
+}
+
+model LeadAttribution {
+  id                String     @id @default(uuid()) @db.Uuid
+  leadId            String     @map("lead_id") @db.Uuid
+  platform          LeadSource
+  isPrimary         Boolean    @default(false) @map("is_primary")
+  externalLeadId    String?    @map("external_lead_id") @db.VarChar(150)
+  campaignId        String?    @map("campaign_id") @db.VarChar(150)
+  campaignName      String?    @map("campaign_name") @db.VarChar(255)
+  adsetId           String?    @map("adset_id") @db.VarChar(150)
+  adsetName         String?    @map("adset_name") @db.VarChar(255)
+  adId              String?    @map("ad_id") @db.VarChar(150)
+  adName            String?    @map("ad_name") @db.VarChar(255)
+  formId            String?    @map("form_id") @db.VarChar(150)
+  formName          String?    @map("form_name") @db.VarChar(255)
+  externalCreatedAt DateTime?  @map("external_created_at")
+  receivedAt        DateTime   @default(now()) @map("received_at")
+  rawEventId        String?    @map("raw_event_id") @db.Uuid
+  createdAt         DateTime   @default(now()) @map("created_at")
+
+  lead     Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  rawEvent IntegrationEvent? @relation(fields: [rawEventId], references: [id])
+
+  @@unique([platform, externalLeadId])
+  @@index([campaignId])
+  @@index([campaignName])
+  @@index([adsetId])
+  @@index([adId])
+  @@map("lead_attributions")
+}
+
+model FollowUpRecord {
+  id                  String              @id @default(uuid()) @db.Uuid
+  leadId              String              @map("lead_id") @db.Uuid
+  userId              String              @map("user_id") @db.Uuid
+  followedUpAt        DateTime            @map("followed_up_at")
+  communicationMethod CommunicationMethod @map("communication_method")
+  content             String              @db.Text
+  nextFollowUpAt      DateTime?           @map("next_follow_up_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([leadId, followedUpAt])
+  @@index([userId, nextFollowUpAt])
+  @@map("follow_up_records")
+}
+
+model LeadStatusHistory {
+  id           String   @id @default(uuid()) @db.Uuid
+  leadId       String   @map("lead_id") @db.Uuid
+  fromStatusId String?  @map("from_status_id") @db.Uuid
+  toStatusId   String   @map("to_status_id") @db.Uuid
+  changedById  String   @map("changed_by_id") @db.Uuid
+  changeReason String?  @map("change_reason") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  lead       Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromStatus LeadStatus? @relation("StatusFrom", fields: [fromStatusId], references: [id])
+  toStatus   LeadStatus  @relation("StatusTo", fields: [toStatusId], references: [id])
+  changedBy  User        @relation(fields: [changedById], references: [id])
+
+  @@index([leadId, createdAt])
+  @@map("lead_status_histories")
+}
+
+model LeadAssignment {
+  id               String           @id @default(uuid()) @db.Uuid
+  leadId           String           @map("lead_id") @db.Uuid
+  fromUserId       String?          @map("from_user_id") @db.Uuid
+  toUserId         String           @map("to_user_id") @db.Uuid
+  assignmentMethod AssignmentMethod @map("assignment_method")
+  assignmentReason String?          @map("assignment_reason") @db.Text
+  assignedById     String?          @map("assigned_by_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  lead       Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromUser   User? @relation("AssignmentFrom", fields: [fromUserId], references: [id])
+  toUser     User  @relation("AssignmentTo", fields: [toUserId], references: [id])
+  assignedBy User? @relation("AssignmentActor", fields: [assignedById], references: [id])
+
+  @@index([leadId, createdAt])
+  @@map("lead_assignments")
+}
+
+model Tag {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(50)
+  color       String   @default("#64748B") @db.VarChar(20)
+  scope       TagScope @default(PERSONAL)
+  createdById String   @map("created_by_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy User      @relation(fields: [createdById], references: [id])
+  leads     LeadTag[]
+
+  @@unique([createdById, scope, name])
+  @@index([scope, isActive])
+  @@map("tags")
+}
+
+model LeadTag {
+  id         String   @id @default(uuid()) @db.Uuid
+  leadId     String   @map("lead_id") @db.Uuid
+  tagId      String   @map("tag_id") @db.Uuid
+  taggedById String   @map("tagged_by_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  lead     Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag      Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  taggedBy User @relation(fields: [taggedById], references: [id])
+
+  @@unique([leadId, tagId])
+  @@index([tagId])
+  @@map("lead_tags")
+}
+
+model IntegrationEvent {
+  id               String              @id @default(uuid()) @db.Uuid
+  provider         IntegrationProvider
+  eventType        String              @map("event_type") @db.VarChar(100)
+  externalEventId  String?             @map("external_event_id") @db.VarChar(200)
+  externalLeadId   String?             @map("external_lead_id") @db.VarChar(150)
+  rawPayload       Json                @map("raw_payload")
+  signatureValid   Boolean             @default(false) @map("signature_valid")
+  processingStatus IntegrationStatus   @default(PENDING) @map("processing_status")
+  retryCount       Int                 @default(0) @map("retry_count")
+  errorMessage     String?             @map("error_message") @db.Text
+  receivedAt       DateTime            @default(now()) @map("received_at")
+  processedAt      DateTime?           @map("processed_at")
+
+  attributions LeadAttribution[]
+
+  @@index([provider, processingStatus, receivedAt])
+  @@index([externalLeadId])
+  @@map("integration_events")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @map("token_hash") @db.VarChar(255)
+  deviceInfo String?   @map("device_info") @db.VarChar(500)
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String   @db.VarChar(100)
+  entityType String   @map("entity_type") @db.VarChar(100)
+  entityId   String?  @map("entity_id") @db.VarChar(100)
+  beforeData Json?    @map("before_data")
+  afterData  Json?    @map("after_data")
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model SystemConfig {
+  id          String   @id @default(uuid()) @db.Uuid
+  configKey   String   @unique @map("config_key") @db.VarChar(100)
+  configValue Json     @map("config_value")
+  description String?  @db.VarChar(500)
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("system_configs")
+}
