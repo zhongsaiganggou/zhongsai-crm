@@ -1,5 +1,5 @@
 import { InvalidReason, LeadQualityFlag } from '@prisma/client';
-import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class ReviewLeadDto {
   @IsBoolean()
@@ -15,6 +15,6 @@ export class ReviewLeadDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   note?: string;
 }
-

@@ -123,18 +123,19 @@ model User {
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
 
-  assignedLeads   Lead[]              @relation("CurrentAssignee")
-  createdLeads    Lead[]              @relation("LeadCreator")
-  reviewedLeads   Lead[]              @relation("LeadReviewer")
-  followUps       FollowUpRecord[]
-  statusChanges   LeadStatusHistory[]
-  assignmentsFrom LeadAssignment[]    @relation("AssignmentFrom")
-  assignmentsTo   LeadAssignment[]    @relation("AssignmentTo")
-  assignmentsMade LeadAssignment[]    @relation("AssignmentActor")
-  tags            Tag[]
-  leadTags        LeadTag[]
-  refreshTokens   RefreshToken[]
-  auditLogs       AuditLog[]
+  assignedLeads        Lead[]              @relation("CurrentAssignee")
+  createdLeads         Lead[]              @relation("LeadCreator")
+  reviewedLeads        Lead[]              @relation("LeadReviewer")
+  followUps            FollowUpRecord[]
+  statusChanges        LeadStatusHistory[]
+  assignmentsFrom      LeadAssignment[]    @relation("AssignmentFrom")
+  assignmentsTo        LeadAssignment[]    @relation("AssignmentTo")
+  assignmentsMade      LeadAssignment[]    @relation("AssignmentActor")
+  tags                 Tag[]
+  leadTags             LeadTag[]
+  refreshTokens        RefreshToken[]
+  auditLogs            AuditLog[]
+  systemConfigsUpdated SystemConfig[]      @relation("SystemConfigUpdater")
 
   @@map("users")
 }
@@ -295,7 +296,7 @@ model LeadAssignment {
   id               String           @id @default(uuid()) @db.Uuid
   leadId           String           @map("lead_id") @db.Uuid
   fromUserId       String?          @map("from_user_id") @db.Uuid
-  toUserId         String           @map("to_user_id") @db.Uuid
+  toUserId         String?          @map("to_user_id") @db.Uuid
   assignmentMethod AssignmentMethod @map("assignment_method")
   assignmentReason String?          @map("assignment_reason") @db.Text
   assignedById     String?          @map("assigned_by_id") @db.Uuid
@@ -303,7 +304,7 @@ model LeadAssignment {
 
   lead       Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
   fromUser   User? @relation("AssignmentFrom", fields: [fromUserId], references: [id])
-  toUser     User  @relation("AssignmentTo", fields: [toUserId], references: [id])
+  toUser     User? @relation("AssignmentTo", fields: [toUserId], references: [id])
   assignedBy User? @relation("AssignmentActor", fields: [assignedById], references: [id])
 
   @@index([leadId, createdAt])
@@ -406,6 +407,8 @@ model SystemConfig {
   updatedById String?  @map("updated_by_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation("SystemConfigUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@map("system_configs")
 }

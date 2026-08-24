@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE = (configuredApiBase || '/api').replace(/\/$/, '');
 
 interface Tokens {
   accessToken: string;
@@ -10,7 +11,11 @@ const tokenKey = 'zhongsai_crm_tokens';
 export function getTokens(): Tokens | null {
   try {
     const value = localStorage.getItem(tokenKey);
-    return value ? JSON.parse(value) as Tokens : null;
+    if (!value) return null;
+    const parsed = JSON.parse(value) as Partial<Tokens>;
+    return typeof parsed.accessToken === 'string' && typeof parsed.refreshToken === 'string'
+      ? { accessToken: parsed.accessToken, refreshToken: parsed.refreshToken }
+      : null;
   } catch {
     return null;
   }
@@ -77,4 +82,3 @@ export function queryString(values: Record<string, string | number | boolean | u
   const query = params.toString();
   return query ? `?${query}` : '';
 }
-

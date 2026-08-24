@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle, Plus, Save, Trash2 } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ErrorState, Loading } from '../components/Feedback';
 import { useToast } from '../contexts/ToastContext';
 import { api } from '../lib/api';
@@ -79,13 +79,20 @@ export function SettingsPage() {
   const [newRuleProjectTypes, setNewRuleProjectTypes] = useState<string[]>([]);
   const [newRuleUserId, setNewRuleUserId] = useState('');
 
-  // 初始化配置
-  if (assignmentQuery.data && !assignmentConfig) {
-    setAssignmentConfig(assignmentQuery.data);
-  }
-  if (poolQuery.data && !poolConfig) {
-    setPoolConfig(poolQuery.data);
-  }
+  useEffect(() => {
+    if (assignmentQuery.data) setAssignmentConfig(assignmentQuery.data);
+  }, [assignmentQuery.data]);
+
+  useEffect(() => {
+    if (poolQuery.data) setPoolConfig(poolQuery.data);
+  }, [poolQuery.data]);
+
+  const updateAssignment = (patch: Partial<AssignmentConfig>) => {
+    setAssignmentConfig((current) => current ? { ...current, ...patch } : current);
+  };
+  const updatePool = (patch: Partial<PoolReclaimConfig>) => {
+    setPoolConfig((current) => current ? { ...current, ...patch } : current);
+  };
 
   const saveAssignment = useMutation({
     mutationFn: (config: AssignmentConfig) =>
@@ -141,8 +148,8 @@ export function SettingsPage() {
   if (assignmentQuery.isLoading || poolQuery.isLoading || usersQuery.isLoading) {
     return <Loading label="正在加载配置" />;
   }
-  if (assignmentQuery.error || poolQuery.error) {
-    return <ErrorState error={assignmentQuery.error || poolQuery.error!} retry={() => { void assignmentQuery.refetch(); void poolQuery.refetch(); }} />;
+  if (assignmentQuery.error || poolQuery.error || usersQuery.error) {
+    return <ErrorState error={assignmentQuery.error || poolQuery.error || usersQuery.error!} retry={() => { void assignmentQuery.refetch(); void poolQuery.refetch(); void usersQuery.refetch(); }} />;
   }
 
   const salesUsers = usersQuery.data?.filter((u) => u.role === 'SALES' && u.status === 'ACTIVE') ?? [];
@@ -160,7 +167,7 @@ export function SettingsPage() {
             <input
               type="checkbox"
               checked={assignmentConfig?.enabled ?? false}
-              onChange={(e) => setAssignmentConfig({ ...assignmentConfig!, enabled: e.target.checked })}
+              onChange={(e) => updateAssignment({ enabled: e.target.checked })}
               className="h-5 w-5"
             />
             <span className="text-sm font-medium">启用自动分配</span>
@@ -174,7 +181,7 @@ export function SettingsPage() {
               <select
                 className="field"
                 value={assignmentConfig?.mode ?? 'load_balance'}
-                onChange={(e) => setAssignmentConfig({ ...assignmentConfig!, mode: e.target.value as AssignmentConfig['mode'] })}
+                onChange={(e) => updateAssignment({ mode: e.target.value as AssignmentConfig['mode'] })}
               >
                 <option value="load_balance">负载均衡（分配给线索最少的销售）</option>
                 <option value="round_robin">轮询分配（按顺序轮流）</option>
@@ -186,7 +193,7 @@ export function SettingsPage() {
               <select
                 className="field"
                 value={assignmentConfig?.defaultUserId ?? ''}
-                onChange={(e) => setAssignmentConfig({ ...assignmentConfig!, defaultUserId: e.target.value || undefined })}
+                onChange={(e) => updateAssignment({ defaultUserId: e.target.value || undefined })}
               >
                 <option value="">不分配（进入公海）</option>
                 {salesUsers.map((u) => (
@@ -305,7 +312,7 @@ export function SettingsPage() {
             <input
               type="checkbox"
               checked={poolConfig?.enabled ?? false}
-              onChange={(e) => setPoolConfig({ ...poolConfig!, enabled: e.target.checked })}
+              onChange={(e) => updatePool({ enabled: e.target.checked })}
               className="h-5 w-5"
             />
             <span className="text-sm font-medium">启用公海回收</span>
@@ -322,7 +329,7 @@ export function SettingsPage() {
                 min={1}
                 max={30}
                 value={poolConfig?.reclaimAfterDays ?? 7}
-                onChange={(e) => setPoolConfig({ ...poolConfig!, reclaimAfterDays: parseInt(e.target.value) || 7 })}
+                onChange={(e) => updatePool({ reclaimAfterDays: parseInt(e.target.value) || 7 })}
               />
             </label>
             <label>
@@ -333,7 +340,7 @@ export function SettingsPage() {
                 min={0}
                 max={7}
                 value={poolConfig?.notifyBeforeDays ?? 1}
-                onChange={(e) => setPoolConfig({ ...poolConfig!, notifyBeforeDays: parseInt(e.target.value) || 1 })}
+                onChange={(e) => updatePool({ notifyBeforeDays: parseInt(e.target.value) || 1 })}
               />
             </label>
           </div>

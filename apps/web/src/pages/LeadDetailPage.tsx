@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, CalendarClock, Clipboard, FileText, LoaderCircle, Mail, MessageCircle, Phone,
+  ArrowLeft, CalendarClock, Clipboard, FileText, LoaderCircle, Mail, MessageCircle, Pencil, Phone,
   Plus, Tag as TagIcon, UserRoundCheck,
 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
@@ -8,6 +8,7 @@ import { Link, useParams } from 'react-router-dom';
 import { LeadTags, QualityBadge, SourceBadge, StatusBadge } from '../components/Badges';
 import { ErrorState, Loading } from '../components/Feedback';
 import { FollowUpModal } from '../components/FollowUpModal';
+import { EditLeadModal } from '../components/EditLeadModal';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -31,6 +32,7 @@ export function LeadDetailPage() {
   const [followOpen, setFollowOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#2563EB');
   const [reviewValid, setReviewValid] = useState(true);
@@ -74,7 +76,7 @@ export function LeadDetailPage() {
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div className="flex items-start gap-3"><Link to="/leads" className="btn-secondary min-w-11 px-2" aria-label="返回客户列表"><ArrowLeft className="h-5 w-5" /></Link><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold tracking-tight text-ink">{display(data.name)}</h2><StatusBadge status={data.currentStatus} />{data.qualityFlag !== 'NORMAL' && <QualityBadge quality={data.qualityFlag} />}</div><p className="mt-1 text-sm text-muted">{data.leadNumber} · 创建于 {formatDate(data.createdAt)}</p></div></div>
-        <div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => setTagOpen(true)}><TagIcon className="h-4 w-4" />管理标签</button><button className="btn-primary" onClick={() => setFollowOpen(true)}><Plus className="h-4 w-4" />添加跟进</button></div>
+        <div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑资料</button><button className="btn-secondary" onClick={() => setTagOpen(true)}><TagIcon className="h-4 w-4" />管理标签</button><button className="btn-primary" onClick={() => setFollowOpen(true)}><Plus className="h-4 w-4" />添加跟进</button></div>
       </div>
 
       <section className="surface p-5">
@@ -102,6 +104,7 @@ export function LeadDetailPage() {
       </div>
 
       <FollowUpModal lead={followOpen ? data : null} onClose={() => setFollowOpen(false)} />
+      <EditLeadModal lead={editOpen ? data : null} onClose={() => setEditOpen(false)} />
       <Modal open={tagOpen} title="管理客户标签" onClose={() => setTagOpen(false)}>
         <div><p className="label">已添加标签</p><div className="flex min-h-11 flex-wrap gap-2">{data.tags.length ? data.tags.map(({ tag }) => <button key={tag.id} className="min-h-11 rounded-full border px-3 text-xs font-semibold" style={{ color: tag.color, borderColor: `${tag.color}66` }} onClick={() => removeTag.mutate(tag.id)} title="点击移除">{tag.name} ×</button>) : <span className="text-sm text-muted">尚未添加标签</span>}</div></div>
         {availableTags.length > 0 && <div className="mt-5"><p className="label">可用标签</p><div className="flex flex-wrap gap-2">{availableTags.map((tag) => <button key={tag.id} className="btn-secondary px-3" onClick={() => addTag.mutate(tag.id)}><Plus className="h-3.5 w-3.5" />{tag.name}</button>)}</div></div>}

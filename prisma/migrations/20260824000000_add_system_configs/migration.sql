@@ -13,3 +13,13 @@ CREATE TABLE "system_configs" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "system_configs_config_key_key" ON "system_configs"("config_key");
+
+-- Allow assignment history to represent a lead being returned to the public pool.
+ALTER TABLE "lead_assignments" DROP CONSTRAINT "lead_assignments_to_user_id_fkey";
+ALTER TABLE "lead_assignments" ALTER COLUMN "to_user_id" DROP NOT NULL;
+ALTER TABLE "lead_assignments" ADD CONSTRAINT "lead_assignments_to_user_id_fkey"
+FOREIGN KEY ("to_user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "system_configs" ADD CONSTRAINT "system_configs_updated_by_id_fkey"
+FOREIGN KEY ("updated_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;

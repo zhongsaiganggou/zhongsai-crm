@@ -7,7 +7,7 @@ import {
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { evaluateContacts } from '../../common/utils/contact.util';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LeadsService } from '../leads/leads.service';
+import { AssignmentService } from '../leads/assignment.service';
 import { MetaLeadDto } from './dto/meta-lead.dto';
 
 interface MetaFieldData { name: string; values?: string[] }
@@ -22,7 +22,7 @@ export class MetaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly leads: LeadsService,
+    private readonly assignment: AssignmentService,
   ) {}
 
   verifyChallenge(mode: string, token: string) {
@@ -96,7 +96,7 @@ export class MetaService {
         attributions: { create: this.attributionData(dto, rawEventId, true) },
       },
     });
-    if (!lead.requiresReview) await this.leads.autoAssign(lead.id);
+    if (!lead.requiresReview) await this.assignment.autoAssign(lead.id);
     return { created: true, leadId: lead.id };
   }
 

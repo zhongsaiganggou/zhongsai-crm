@@ -39,6 +39,9 @@ META_APP_SECRET=
 META_PAGE_ACCESS_TOKEN=
 META_GRAPH_API_VERSION=v25.0
 META_GRAPH_BASE_URL=https://graph.facebook.com
+WECHAT_WEBHOOK_URL=
+GOOGLE_SHEETS_WEBHOOK_URL=
+CRM_PUBLIC_URL=https://crm.zhongsai-steelstructure.com
 SEED_ADMIN_MOBILE=${admin_mobile}
 SEED_ADMIN_PASSWORD=${admin_password}
 EOF

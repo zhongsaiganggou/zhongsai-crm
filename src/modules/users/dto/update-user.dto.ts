@@ -8,6 +8,5 @@ export class UpdateUserDto {
   @IsOptional() @IsEnum(UserRole) role?: UserRole;
   @IsOptional() @IsEnum(UserStatus) status?: UserStatus;
   @IsOptional() @IsArray() @IsEnum(ChannelCapability, { each: true }) channelCapabilities?: ChannelCapability[];
-  @IsOptional() @IsString() @MinLength(8) @MaxLength(128) password?: string;
+  @IsOptional() @IsString() @MinLength(12) @MaxLength(128) password?: string;
 }
-

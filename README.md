@@ -41,6 +41,9 @@ Swagger 地址：`http://localhost:3000/api/docs`
 - `/api/analytics`：首页和广告统计；
 - `/api/integrations/meta/webhook`：Meta Lead Ads Webhook；
 - `/api/integrations/meta/import`：管理员测试导入。
+- `/api/integrations/website/lead`：官网表单公开接入（限流、参数校验、CRM 入库）。
+
+官网表单写入成功后会以 CRM 为主记录，并按配置并行推送企业微信和 Google Sheets。外部推送失败不会导致线索丢失；失败原因会写入服务日志。自动分配、公海回收和提醒时区固定为北京时间。
 
 ## Meta 配置
 

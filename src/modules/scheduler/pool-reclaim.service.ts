@@ -1,238 +1,275 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import { AssignmentState, Prisma, UserRole } from '@prisma/client';
+import {
+  AssignmentMethod,
+  AssignmentState,
+  Prisma,
+  UserRole,
+  UserStatus,
+} from '@prisma/client';
+import { PoolReclaimConfigDto } from '../leads/dto/pool-reclaim-config.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export interface PoolReclaimConfig {
-  enabled: boolean;
-  reclaimAfterDays: number;
-  excludeStatuses: string[];
-  notifyBeforeDays: number;
-}
-
-const DEFAULT_CONFIG: PoolReclaimConfig = {
+const DEFAULT_CONFIG: Readonly<PoolReclaimConfigDto> = {
   enabled: false,
   reclaimAfterDays: 7,
   excludeStatuses: ['WON', 'INVALID', 'LOST'],
   notifyBeforeDays: 1,
 };
 
+const reclaimLeadInclude = {
+  assignedUser: { select: { id: true, name: true } },
+  currentStatus: { select: { code: true, nameZh: true } },
+} satisfies Prisma.LeadInclude;
+
+type ReclaimLead = Prisma.LeadGetPayload<{ include: typeof reclaimLeadInclude }>;
+
 @Injectable()
 export class PoolReclaimService {
   private readonly logger = new Logger(PoolReclaimService.name);
   private readonly CONFIG_KEY = 'pool_reclaim_rules';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
-  async getConfig(): Promise<PoolReclaimConfig> {
-    const record = await this.prisma.systemConfig.findUnique({
-      where: { configKey: this.CONFIG_KEY },
-    });
-    if (!record) return DEFAULT_CONFIG;
-    return record.configValue as unknown as PoolReclaimConfig;
+  async getConfig(): Promise<PoolReclaimConfigDto> {
+    const record = await this.prisma.systemConfig.findUnique({ where: { configKey: this.CONFIG_KEY } });
+    if (!record) return this.defaultConfig();
+    return this.normalizeConfig(record.configValue as unknown as PoolReclaimConfigDto);
   }
 
-  async saveConfig(config: PoolReclaimConfig, updatedById?: string): Promise<PoolReclaimConfig> {
+  async saveConfig(config: PoolReclaimConfigDto, updatedById?: string): Promise<PoolReclaimConfigDto> {
+    const normalized = this.normalizeConfig(config);
+    const validStatusCount = await this.prisma.leadStatus.count({
+      where: { code: { in: normalized.excludeStatuses }, isActive: true },
+    });
+    if (validStatusCount !== new Set(normalized.excludeStatuses).size) {
+      throw new BadRequestException('排除状态中包含不存在或已停用的状态');
+    }
     const saved = await this.prisma.systemConfig.upsert({
       where: { configKey: this.CONFIG_KEY },
-      update: {
-        configValue: config as unknown as Prisma.InputJsonValue,
-        updatedById,
-      },
+      update: { configValue: normalized as unknown as Prisma.InputJsonValue, updatedById },
       create: {
         configKey: this.CONFIG_KEY,
-        configValue: config as unknown as Prisma.InputJsonValue,
+        configValue: normalized as unknown as Prisma.InputJsonValue,
         description: '公海回收规则配置',
         updatedById,
       },
     });
-    return saved.configValue as unknown as PoolReclaimConfig;
+    return saved.configValue as unknown as PoolReclaimConfigDto;
   }
 
-  // 每天凌晨2点执行公海回收
-  @Cron('0 0 2 * * *', { name: 'pool-reclaim' })
+  @Cron('0 0 2 * * *', { name: 'pool-reclaim', timeZone: 'Asia/Shanghai' })
   async executeReclaim() {
     this.logger.log('开始执行公海回收任务');
     try {
       const config = await this.getConfig();
-      if (!config.enabled) {
-        this.logger.log('公海回收未启用，跳过');
-        return;
+      if (!config.enabled) return;
+      const thresholdDate = this.daysAgo(config.reclaimAfterDays);
+      const leadsToReclaim = await this.prisma.lead.findMany({
+        where: this.reclaimableWhere(config, thresholdDate),
+        include: reclaimLeadInclude,
+      });
+
+      let reclaimed = 0;
+      const reclaimedLeads: ReclaimLead[] = [];
+      for (const lead of leadsToReclaim) {
+        try {
+          const changed = await this.reclaimIfStillAssigned(
+            lead,
+            `公海自动回收：超过${config.reclaimAfterDays}天未跟进`,
+          );
+          if (changed) {
+            reclaimed++;
+            reclaimedLeads.push(lead);
+          }
+        } catch (error) {
+          this.logger.warn(`回收线索${lead.leadNumber}失败: ${this.errorMessage(error)}`);
+        }
       }
 
-      const now = new Date();
-      const thresholdDate = new Date(now.getTime() - config.reclaimAfterDays * 24 * 60 * 60 * 1000);
+      await this.notifyReclaim(reclaimed, reclaimedLeads).catch((error: unknown) => {
+        this.logger.warn(`公海回收通知失败: ${this.errorMessage(error)}`);
+      });
+      this.logger.log(`公海回收完成，共回收${reclaimed}/${leadsToReclaim.length}条线索`);
+    } catch (error) {
+      this.logger.error(`公海回收任务失败: ${this.errorMessage(error)}`);
+    }
+  }
 
-      // 查询需要回收的线索
-      const leadsToReclaim = await this.prisma.lead.findMany({
+  @Cron('0 30 9 * * *', { name: 'pool-reclaim-warning', timeZone: 'Asia/Shanghai' })
+  async notifyUpcomingReclaim() {
+    try {
+      const config = await this.getConfig();
+      if (!config.enabled || config.notifyBeforeDays <= 0) return;
+      const warningDate = this.daysAgo(Math.max(0, config.reclaimAfterDays - config.notifyBeforeDays));
+      const reclaimDate = this.daysAgo(config.reclaimAfterDays);
+      const leads = await this.prisma.lead.findMany({
         where: {
           archivedAt: null,
           assignedUserId: { not: null },
           assignmentState: AssignmentState.ASSIGNED,
-          currentStatus: {
-            isTerminal: false,
-            code: { notIn: config.excludeStatuses },
-          },
+          currentStatus: { isTerminal: false, code: { notIn: config.excludeStatuses } },
           OR: [
-            { lastFollowedUpAt: { lt: thresholdDate } },
-            { lastFollowedUpAt: null, createdAt: { lt: thresholdDate } },
+            { lastFollowedUpAt: { gte: reclaimDate, lt: warningDate } },
+            { lastFollowedUpAt: null, createdAt: { gte: reclaimDate, lt: warningDate } },
           ],
         },
-        include: {
-          assignedUser: { select: { id: true, name: true } },
-          currentStatus: { select: { code: true, nameZh: true } },
-        },
+        include: reclaimLeadInclude,
       });
-
-      if (leadsToReclaim.length === 0) {
-        this.logger.log('无需要回收的线索');
-        return;
-      }
-
-      // 执行回收
-      let reclaimed = 0;
-      for (const lead of leadsToReclaim) {
-        try {
-          await this.prisma.$transaction([
-            this.prisma.lead.update({
-              where: { id: lead.id },
-              data: {
-                assignedUserId: null,
-                assignmentState: AssignmentState.UNASSIGNED,
-              },
-            }),
-            this.prisma.leadAssignment.create({
-              data: {
-                leadId: lead.id,
-                fromUserId: lead.assignedUserId!,
-                toUserId: lead.assignedUserId!, // 临时占位，实际是回收到公海
-                assignmentMethod: 'AUTOMATIC' as any,
-                assignmentReason: `公海自动回收：超过${config.reclaimAfterDays}天未跟进`,
-              },
-            }),
-            this.prisma.auditLog.create({
-              data: {
-                action: 'POOL_RECLAIM',
-                entityType: 'LEAD',
-                entityId: lead.id,
-                beforeData: { assignedUserId: lead.assignedUserId, salesName: lead.assignedUser?.name } as Prisma.InputJsonValue,
-                afterData: { assignedUserId: null, reason: '公海回收' } as Prisma.InputJsonValue,
-              },
-            }),
-          ]);
-          reclaimed++;
-        } catch (error) {
-          this.logger.warn(`回收线索${lead.leadNumber}失败: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-
-      // 推送通知
-      await this.notifyReclaim(reclaimed, leadsToReclaim).catch((err) => {
-        this.logger.warn(`公海回收通知失败: ${err.message}`);
-      });
-
-      this.logger.log(`公海回收完成，共回收${reclaimed}/${leadsToReclaim.length}条线索`);
+      if (leads.length) await this.notifyUpcoming(leads, config.notifyBeforeDays);
     } catch (error) {
-      this.logger.error(`公海回收任务失败: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(`公海回收预警失败: ${this.errorMessage(error)}`);
     }
   }
 
-  // 手动回收单条线索
   async reclaimLead(leadId: string, actorId: string, reason?: string) {
-    const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
-    if (!lead) throw new Error('客户不存在');
-    if (!lead.assignedUserId) throw new Error('客户未分配，无需回收');
-
-    await this.prisma.$transaction([
-      this.prisma.lead.update({
-        where: { id: leadId },
-        data: { assignedUserId: null, assignmentState: AssignmentState.UNASSIGNED },
-      }),
-      this.prisma.leadAssignment.create({
-        data: {
-          leadId,
-          fromUserId: lead.assignedUserId,
-          toUserId: lead.assignedUserId,
-          assignmentMethod: 'MANUAL' as any,
-          assignmentReason: reason || '手动回收到公海',
-          assignedById: actorId,
-        },
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          userId: actorId,
-          action: 'MANUAL_POOL_RECLAIM',
-          entityType: 'LEAD',
-          entityId: leadId,
-        },
-      }),
-    ]);
-
+    const lead = await this.prisma.lead.findUnique({ where: { id: leadId }, include: reclaimLeadInclude });
+    if (!lead) throw new NotFoundException('客户不存在');
+    if (!lead.assignedUserId) throw new BadRequestException('客户未分配，无需回收');
+    const changed = await this.reclaimIfStillAssigned(lead, reason || '手动回收到公海', actorId);
+    if (!changed) throw new ConflictException('客户负责人已变化，请刷新后重试');
     return { success: true, leadId };
   }
 
-  // 管理员手动领取公海线索
   async claimLead(leadId: string, userId: string) {
-    const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
-    if (!lead) throw new Error('客户不存在');
-    if (lead.assignedUserId) throw new Error('客户已被分配');
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, role: UserRole.SALES, status: UserStatus.ACTIVE },
+      select: { id: true },
+    });
+    if (!user) throw new BadRequestException('当前账号不是可用销售账号');
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || user.role !== UserRole.SALES) throw new Error('用户不是销售');
-
-    await this.prisma.$transaction([
-      this.prisma.lead.update({
-        where: { id: leadId },
+    await this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.findUnique({ where: { id: leadId }, select: { id: true, assignedUserId: true } });
+      if (!lead) throw new NotFoundException('客户不存在');
+      if (lead.assignedUserId) throw new ConflictException('客户已被分配');
+      const updated = await tx.lead.updateMany({
+        where: { id: leadId, assignedUserId: null, archivedAt: null },
         data: { assignedUserId: userId, assignmentState: AssignmentState.ASSIGNED },
-      }),
-      this.prisma.leadAssignment.create({
+      });
+      if (!updated.count) throw new ConflictException('客户已被其他销售领取');
+      await tx.leadAssignment.create({
         data: {
           leadId,
           toUserId: userId,
-          assignmentMethod: 'MANUAL' as any,
+          assignmentMethod: AssignmentMethod.MANUAL,
           assignmentReason: '从公海领取',
           assignedById: userId,
         },
-      }),
-      this.prisma.auditLog.create({
-        data: {
-          userId,
-          action: 'CLAIM_FROM_POOL',
-          entityType: 'LEAD',
-          entityId: leadId,
-        },
-      }),
-    ]);
-
+      });
+      await tx.auditLog.create({
+        data: { userId, action: 'CLAIM_FROM_POOL', entityType: 'LEAD', entityId: leadId },
+      });
+    });
     return { success: true, leadId, userId };
   }
 
-  private async notifyReclaim(count: number, leads: any[]) {
-    const webhookUrl = process.env.WECHAT_WEBHOOK_URL;
-    if (!webhookUrl || count === 0) return;
+  private async reclaimIfStillAssigned(lead: ReclaimLead, reason: string, actorId?: string) {
+    if (!lead.assignedUserId) return false;
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.lead.updateMany({
+        where: { id: lead.id, assignedUserId: lead.assignedUserId, archivedAt: null },
+        data: { assignedUserId: null, assignmentState: AssignmentState.UNASSIGNED },
+      });
+      if (!updated.count) return false;
+      await tx.leadAssignment.create({
+        data: {
+          leadId: lead.id,
+          fromUserId: lead.assignedUserId,
+          toUserId: null,
+          assignmentMethod: actorId ? AssignmentMethod.MANUAL : AssignmentMethod.AUTOMATIC,
+          assignmentReason: reason,
+          assignedById: actorId,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: actorId,
+          action: actorId ? 'MANUAL_POOL_RECLAIM' : 'POOL_RECLAIM',
+          entityType: 'LEAD',
+          entityId: lead.id,
+          beforeData: {
+            assignedUserId: lead.assignedUserId,
+            salesName: lead.assignedUser?.name,
+          } as Prisma.InputJsonValue,
+          afterData: { assignedUserId: null, reason } as Prisma.InputJsonValue,
+        },
+      });
+      return true;
+    });
+  }
 
-    const bySales = new Map<string, number>();
+  private reclaimableWhere(config: PoolReclaimConfigDto, thresholdDate: Date): Prisma.LeadWhereInput {
+    return {
+      archivedAt: null,
+      assignedUserId: { not: null },
+      assignmentState: AssignmentState.ASSIGNED,
+      currentStatus: { isTerminal: false, code: { notIn: config.excludeStatuses } },
+      OR: [
+        { lastFollowedUpAt: { lt: thresholdDate } },
+        { lastFollowedUpAt: null, createdAt: { lt: thresholdDate } },
+      ],
+    };
+  }
+
+  private async notifyReclaim(count: number, leads: ReclaimLead[]) {
+    if (!count) return;
+    const lines = ['🔄 公海回收通知', `共回收 ${count} 条超时未跟进线索`, '', '按销售分布:'];
+    const bySales = this.countBySales(leads);
+    for (const [name, total] of bySales) lines.push(`• ${name}: ${total} 条`);
+    lines.push('', '线索已回收到公海，可重新分配');
+    await this.sendWeChat(lines.join('\n'));
+  }
+
+  private async notifyUpcoming(leads: ReclaimLead[], days: number) {
+    const lines = ['⚠️ 公海回收预警', `${leads.length} 条线索将在 ${days} 天内被回收`, '', '按销售分布:'];
+    for (const [name, total] of this.countBySales(leads)) lines.push(`• ${name}: ${total} 条`);
+    lines.push('', '请尽快跟进并填写跟进记录');
+    await this.sendWeChat(lines.join('\n'));
+  }
+
+  private countBySales(leads: ReclaimLead[]) {
+    const result = new Map<string, number>();
     for (const lead of leads) {
       const name = lead.assignedUser?.name || '未知';
-      bySales.set(name, (bySales.get(name) || 0) + 1);
+      result.set(name, (result.get(name) || 0) + 1);
     }
+    return result;
+  }
 
-    const lines = [
-      '🔄 公海回收通知',
-      `共回收 ${count} 条超时未跟进线索`,
-      '',
-      '按销售分布:',
-    ];
-    for (const [name, c] of bySales) {
-      lines.push(`• ${name}: ${c} 条`);
-    }
-    lines.push('', '线索已回收到公海，可重新分配');
-
-    const content = lines.join('\n');
-    await fetch(webhookUrl, {
+  private async sendWeChat(content: string) {
+    const webhookUrl = this.config.get<string>('WECHAT_WEBHOOK_URL');
+    if (!webhookUrl) return;
+    const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ msgtype: 'text', text: { content } }),
+      signal: AbortSignal.timeout(10_000),
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  }
+
+  private normalizeConfig(config: PoolReclaimConfigDto): PoolReclaimConfigDto {
+    return {
+      enabled: Boolean(config.enabled),
+      reclaimAfterDays: config.reclaimAfterDays,
+      excludeStatuses: [...new Set(config.excludeStatuses.map((status) => status.toUpperCase()))],
+      notifyBeforeDays: Math.min(config.notifyBeforeDays, config.reclaimAfterDays),
+    };
+  }
+
+  private defaultConfig(): PoolReclaimConfigDto {
+    return { ...DEFAULT_CONFIG, excludeStatuses: [...DEFAULT_CONFIG.excludeStatuses] };
+  }
+
+  private daysAgo(days: number) {
+    return new Date(Date.now() - days * 86_400_000);
+  }
+
+  private errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
   }
 }

@@ -1,24 +1,30 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
-  AssignmentMethod, AssignmentState, CommunicationMethod, LeadQualityFlag,
+  AssignmentState, CommunicationMethod, LeadQualityFlag,
   LeadSource, Prisma, ProjectType, PurchaseTimeline,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { evaluateContacts } from '../../common/utils/contact.util';
+import { AssignmentService } from '../leads/assignment.service';
 import { WebsiteLeadDto } from './dto/website-lead.dto';
 
 @Injectable()
 export class WebsiteService {
   private readonly logger = new Logger(WebsiteService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    private readonly assignment: AssignmentService,
+  ) {}
 
   async receiveLead(dto: WebsiteLeadDto, ip?: string) {
     const status = await this.prisma.leadStatus.findUnique({ where: { code: 'NEW' } });
     if (!status) {
       this.logger.error('客户状态初始化未完成，缺少 NEW 状态');
-      return { success: false, error: '系统初始化未完成' };
+      throw new ServiceUnavailableException('系统初始化未完成');
     }
 
     const contact = evaluateContacts({
@@ -93,15 +99,28 @@ export class WebsiteService {
 
       this.logger.log(`网站线索创建成功: ${leadNumber} (${dto.name || '匿名'})`);
 
-      // 推送企业微信通知
-      await this.notifyWeChat(lead, dto).catch((err) => {
-        this.logger.warn(`企业微信通知失败: ${err.message}`);
+      if (!lead.requiresReview) {
+        await this.assignment.autoAssign(lead.id).catch((error: unknown) => {
+          this.logger.warn(`网站线索自动分配失败: ${this.errorMessage(error)}`);
+        });
+      }
+
+      // CRM 已先持久化，再并行推送企业微信和 Google Sheets；外部通道失败不丢失线索。
+      const notifications = await Promise.allSettled([
+        this.notifyWeChat(lead, dto),
+        this.notifyGoogleSheets(lead, dto),
+      ]);
+      const channels = ['企业微信', 'Google Sheets'];
+      notifications.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          this.logger.warn(`${channels[index]}通知失败: ${this.errorMessage(result.reason)}`);
+        }
       });
 
       return { success: true, leadNumber: lead.leadNumber, leadId: lead.id };
     } catch (error) {
       this.logger.error(`网站线索创建失败: ${error instanceof Error ? error.message : String(error)}`);
-      return { success: false, error: '创建失败' };
+      throw new InternalServerErrorException('线索保存失败，请稍后重试');
     }
   }
 
@@ -182,7 +201,7 @@ export class WebsiteService {
   }
 
   private async notifyWeChat(lead: { leadNumber: string; name: string | null; countryName: string | null; companyName: string | null; email: string | null; whatsappRaw: string | null; wechatId: string | null; phoneRaw: string | null; projectDescription: string | null }, dto: WebsiteLeadDto) {
-    const webhookUrl = process.env.WECHAT_WEBHOOK_URL;
+    const webhookUrl = this.config.get<string>('WECHAT_WEBHOOK_URL');
     if (!webhookUrl) return;
 
     const content = [
@@ -205,10 +224,69 @@ export class WebsiteService {
       text: { content },
     });
 
-    await fetch(webhookUrl, {
+    const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
+      signal: AbortSignal.timeout(10_000),
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  }
+
+  private async notifyGoogleSheets(
+    lead: {
+      id: string;
+      leadNumber: string;
+      name: string | null;
+      countryName: string | null;
+      city: string | null;
+      companyName: string | null;
+      email: string | null;
+      whatsappRaw: string | null;
+      wechatId: string | null;
+      phoneRaw: string | null;
+      projectDescription: string | null;
+      createdAt: Date;
+    },
+    dto: WebsiteLeadDto,
+  ) {
+    const webhookUrl = this.config.get<string>('GOOGLE_SHEETS_WEBHOOK_URL');
+    if (!webhookUrl) return;
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'website_lead_created',
+        lead: {
+          id: lead.id,
+          leadNumber: lead.leadNumber,
+          name: lead.name,
+          country: lead.countryName,
+          city: lead.city,
+          company: lead.companyName,
+          wechat: lead.wechatId,
+          whatsapp: lead.whatsappRaw,
+          phone: lead.phoneRaw,
+          email: lead.email,
+          projectDescription: lead.projectDescription,
+          createdAt: lead.createdAt.toISOString(),
+        },
+        attribution: {
+          sourcePage: dto.sourcePage,
+          utmSource: dto.utmSource,
+          utmMedium: dto.utmMedium,
+          utmCampaign: dto.utmCampaign,
+          utmContent: dto.utmContent,
+          utmTerm: dto.utmTerm,
+          language: dto.language,
+        },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  }
+
+  private errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
   }
 }

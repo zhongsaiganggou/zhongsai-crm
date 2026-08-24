@@ -1,16 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
+import { Cron } from '@nestjs/schedule';
 import { AssignmentState, UserRole, UserStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+
+interface ReminderLead {
+  leadNumber: string;
+  name: string | null;
+  countryName: string | null;
+  nextFollowUpAt: Date | null;
+  lastFollowedUpAt: Date | null;
+  assignedUser: { name: string } | null;
+}
 
 @Injectable()
 export class ReminderService {
   private readonly logger = new Logger(ReminderService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   // 每天早上9点推送今日待跟进提醒
-  @Cron('0 0 9 * * *', { name: 'daily-followup-reminder' })
+  @Cron('0 0 9 * * *', { name: 'daily-followup-reminder', timeZone: 'Asia/Shanghai' })
   async dailyFollowUpReminder() {
     this.logger.log('开始执行每日跟进提醒任务');
     try {
@@ -45,15 +58,15 @@ export class ReminderService {
       }
 
       // 推送每个销售的待跟进提醒
-      for (const [salesId, data] of bySales) {
-        await this.notifySales(salesId, data.name, data.leads, 'today').catch((err) => {
-          this.logger.warn(`推送销售${data.name}提醒失败: ${err.message}`);
+      for (const data of bySales.values()) {
+        await this.notifySales(data.name, data.leads, 'today').catch((err: unknown) => {
+          this.logger.warn(`推送销售${data.name}提醒失败: ${this.errorMessage(err)}`);
         });
       }
 
       // 推送管理员汇总
-      await this.notifyAdminSummary(dueToday, 'today').catch((err) => {
-        this.logger.warn(`推送管理员汇总失败: ${err.message}`);
+      await this.notifyAdminSummary(dueToday, 'today').catch((err: unknown) => {
+        this.logger.warn(`推送管理员汇总失败: ${this.errorMessage(err)}`);
       });
 
       this.logger.log(`今日待跟进提醒推送完成，共${dueToday.length}条线索，${bySales.size}位销售`);
@@ -63,7 +76,7 @@ export class ReminderService {
   }
 
   // 每天早上10点检查超过3天未跟进的线索
-  @Cron('0 0 10 * * *', { name: 'overdue-followup-reminder' })
+  @Cron('0 0 10 * * *', { name: 'overdue-followup-reminder', timeZone: 'Asia/Shanghai' })
   async overdueFollowUpReminder() {
     this.logger.log('开始执行超时未跟进提醒任务');
     try {
@@ -107,15 +120,15 @@ export class ReminderService {
       }
 
       // 推送每个销售的超时提醒
-      for (const [salesId, data] of bySales) {
-        await this.notifySales(salesId, data.name, data.leads, 'overdue').catch((err) => {
-          this.logger.warn(`推送销售${data.name}超时提醒失败: ${err.message}`);
+      for (const data of bySales.values()) {
+        await this.notifySales(data.name, data.leads, 'overdue').catch((err: unknown) => {
+          this.logger.warn(`推送销售${data.name}超时提醒失败: ${this.errorMessage(err)}`);
         });
       }
 
       // 推送管理员汇总
-      await this.notifyAdminSummary(overdue, 'overdue').catch((err) => {
-        this.logger.warn(`推送管理员超时汇总失败: ${err.message}`);
+      await this.notifyAdminSummary(overdue, 'overdue').catch((err: unknown) => {
+        this.logger.warn(`推送管理员超时汇总失败: ${this.errorMessage(err)}`);
       });
 
       this.logger.log(`超时未跟进提醒推送完成，共${overdue.length}条线索，${bySales.size}位销售`);
@@ -124,8 +137,8 @@ export class ReminderService {
     }
   }
 
-  private async notifySales(salesId: string, salesName: string, leads: any[], type: 'today' | 'overdue') {
-    const webhookUrl = process.env.WECHAT_WEBHOOK_URL;
+  private async notifySales(salesName: string, leads: ReminderLead[], type: 'today' | 'overdue') {
+    const webhookUrl = this.config.get<string>('WECHAT_WEBHOOK_URL');
     if (!webhookUrl) return;
 
     const title = type === 'today' ? '📋 今日待跟进提醒' : '⚠️ 超时未跟进提醒';
@@ -155,8 +168,8 @@ export class ReminderService {
     await this.sendWeChat(webhookUrl, content);
   }
 
-  private async notifyAdminSummary(leads: any[], type: 'today' | 'overdue') {
-    const webhookUrl = process.env.WECHAT_WEBHOOK_URL;
+  private async notifyAdminSummary(leads: ReminderLead[], type: 'today' | 'overdue') {
+    const webhookUrl = this.config.get<string>('WECHAT_WEBHOOK_URL');
     if (!webhookUrl) return;
 
     // 查询管理员
@@ -194,10 +207,16 @@ export class ReminderService {
       text: { content },
     });
 
-    await fetch(webhookUrl, {
+    const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
+      signal: AbortSignal.timeout(10_000),
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  }
+
+  private errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
   }
 }

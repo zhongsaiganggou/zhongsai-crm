@@ -6,6 +6,7 @@ apps/web/node_modules/
 dist/
 apps/web/dist/
 build/
+*.tsbuildinfo
 
 # Environment
 .env

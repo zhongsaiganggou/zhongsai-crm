@@ -4,15 +4,17 @@ import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../../common/types/auth-user.type';
-import { AssignmentService, AssignmentConfig } from './assignment.service';
+import { AssignmentService } from './assignment.service';
+import { AssignmentConfigDto } from './dto/assignment-config.dto';
 import { AssignLeadDto } from './dto/assign-lead.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { QueryLeadsDto } from './dto/query-leads.dto';
 import { ReviewLeadDto } from './dto/review-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
+import { PoolReclaimConfigDto } from './dto/pool-reclaim-config.dto';
 import { LeadsService } from './leads.service';
-import { PoolReclaimService, PoolReclaimConfig } from '../scheduler/pool-reclaim.service';
+import { PoolReclaimService } from '../scheduler/pool-reclaim.service';
 
 @ApiTags('客户线索')
 @ApiBearerAuth()
@@ -52,7 +54,7 @@ export class LeadsController {
 
   @Put('assignment-config')
   @Roles(UserRole.ADMIN)
-  saveAssignmentConfig(@CurrentUser() user: AuthUser, @Body() config: AssignmentConfig) {
+  saveAssignmentConfig(@CurrentUser() user: AuthUser, @Body() config: AssignmentConfigDto) {
     return this.assignmentService.saveConfig(config, user.id);
   }
 
@@ -64,7 +66,7 @@ export class LeadsController {
 
   @Put('pool-config')
   @Roles(UserRole.ADMIN)
-  savePoolConfig(@CurrentUser() user: AuthUser, @Body() config: PoolReclaimConfig) {
+  savePoolConfig(@CurrentUser() user: AuthUser, @Body() config: PoolReclaimConfigDto) {
     return this.poolReclaimService.saveConfig(config, user.id);
   }
 

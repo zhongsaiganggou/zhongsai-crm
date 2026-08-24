@@ -14,13 +14,12 @@ export class CreateLeadDto {
   @IsOptional() @IsString() @MaxLength(100) phone?: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsEnum(ProjectType) projectType?: ProjectType;
-  @IsOptional() @IsString() projectDescription?: string;
+  @IsOptional() @IsString() @MaxLength(10000) projectDescription?: string;
   @IsOptional() @IsEnum(PurchaseTimeline) purchaseTimeline?: PurchaseTimeline;
   @IsOptional() @IsDateString() expectedPurchaseDate?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) estimatedBudget?: number;
   @IsOptional() @IsString() @Length(3, 3) budgetCurrency?: string;
-  @IsOptional() @IsString() remark?: string;
+  @IsOptional() @IsString() @MaxLength(10000) remark?: string;
   @IsOptional() @IsEnum(LeadSource) sourceType: LeadSource = LeadSource.MANUAL;
   @IsOptional() @IsUUID() assignedUserId?: string;
 }
-

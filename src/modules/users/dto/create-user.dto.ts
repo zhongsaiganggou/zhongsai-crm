@@ -15,7 +15,7 @@ export class CreateUserDto {
   email?: string;
 
   @IsString()
-  @MinLength(8)
+  @MinLength(12)
   @MaxLength(128)
   password: string;
 
@@ -26,4 +26,3 @@ export class CreateUserDto {
   @IsEnum(ChannelCapability, { each: true })
   channelCapabilities: ChannelCapability[] = [];
 }
-

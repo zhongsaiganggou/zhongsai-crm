@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  AssignmentMethod, AssignmentState, ChannelCapability, CommunicationMethod, LeadQualityFlag,
+  AssignmentMethod, AssignmentState, LeadQualityFlag,
   Prisma, UserRole, UserStatus,
 } from '@prisma/client';
 import { randomBytes } from 'crypto';
@@ -184,28 +184,6 @@ export class LeadsService {
     return this.prisma.lead.findUnique({ where: { id: leadId }, include: leadInclude });
   }
 
-  async autoAssign(leadId: string, actorId?: string) {
-    const lead = await this.prisma.lead.findUnique({ where: { id: leadId } });
-    if (!lead) throw new NotFoundException('客户不存在');
-    if (lead.requiresReview || lead.contactAvailability === 'NONE') {
-      await this.prisma.lead.update({ where: { id: leadId }, data: { assignmentState: AssignmentState.REVIEW_REQUIRED } });
-      return { assigned: false, reason: '客户需要人工核查' };
-    }
-    const capability = this.channelToCapability(lead.preferredChannel);
-    const candidates = await this.prisma.user.findMany({
-      where: { role: UserRole.SALES, status: UserStatus.ACTIVE, ...(capability ? { channelCapabilities: { has: capability } } : {}) },
-      select: { id: true, _count: { select: { assignedLeads: { where: { archivedAt: null, currentStatus: { isTerminal: false } } } } } },
-    });
-    if (!candidates.length) return { assigned: false, reason: '没有符合渠道条件的可用销售' };
-    candidates.sort((a, b) => a._count.assignedLeads - b._count.assignedLeads);
-    const target = candidates[0];
-    await this.prisma.$transaction([
-      this.prisma.lead.update({ where: { id: leadId }, data: { assignedUserId: target.id, assignmentState: AssignmentState.ASSIGNED } }),
-      this.prisma.leadAssignment.create({ data: { leadId, fromUserId: lead.assignedUserId, toUserId: target.id, assignmentMethod: AssignmentMethod.AUTOMATIC, assignmentReason: `按${lead.preferredChannel ?? '默认'}渠道均衡分配`, assignedById: actorId } }),
-    ]);
-    return { assigned: true, userId: target.id };
-  }
-
   async review(user: AuthUser, id: string, dto: ReviewLeadDto) {
     const lead = await this.assertAccess(user, id);
     if (!dto.valid && !dto.invalidReasonCode) throw new BadRequestException('确认无效时必须选择原因');
@@ -250,8 +228,4 @@ export class LeadsService {
     return `ZS-${date}-${randomBytes(3).toString('hex').toUpperCase()}`;
   }
 
-  private channelToCapability(channel: CommunicationMethod | null): ChannelCapability | null {
-    if (!channel || channel === CommunicationMethod.REVIEW) return null;
-    return channel as unknown as ChannelCapability;
-  }
 }

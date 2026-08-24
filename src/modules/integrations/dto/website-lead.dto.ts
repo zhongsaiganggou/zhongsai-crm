@@ -53,6 +53,7 @@ export class WebsiteLeadDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(10000)
   projectDescription?: string;
 
   @IsOptional()

@@ -20,8 +20,12 @@ async function main() {
     await prisma.leadStatus.upsert({ where: { code: status.code }, create: status, update: status });
   }
 
-  const mobile = process.env.SEED_ADMIN_MOBILE ?? '13800000000';
-  const password = process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe123!';
+  const mobile = process.env.SEED_ADMIN_MOBILE?.trim();
+  const password = process.env.SEED_ADMIN_PASSWORD;
+  if (!mobile) throw new Error('缺少 SEED_ADMIN_MOBILE，已停止创建管理员');
+  if (!password || password.length < 12) {
+    throw new Error('SEED_ADMIN_PASSWORD 必须至少 12 位，已停止创建管理员');
+  }
   await prisma.user.upsert({
     where: { mobile },
     create: {
@@ -29,8 +33,12 @@ async function main() {
     },
     update: {},
   });
-  console.log(`初始化完成，管理员手机号：${mobile}。首次登录后请立即修改密码。`);
+  process.stdout.write(`初始化完成，管理员手机号：${mobile}。首次登录后请立即修改密码。\n`);
 }
 
-main().finally(async () => prisma.$disconnect());
-
+void main()
+  .catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  })
+  .finally(async () => prisma.$disconnect());
