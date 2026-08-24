@@ -61,7 +61,7 @@ Webhook 接收器会先保存原始事件，再从 Graph API 拉取完整 Lead�
 2. 执行 `bash scripts/init-production-env.sh`，在服务器终端本地设置管理员手机号和初始密码。
 3. 执行 `sudo docker compose build`。
 4. 执行 `sudo docker compose up -d`。
-5. 执行 `sudo docker compose exec api pnpm prisma:seed` 初始化状态和管理员。
+5. 首次部署执行 `sudo docker compose exec api ./node_modules/.bin/ts-node prisma/seed.ts` 初始化状态和管理员；升级现有系统时不要重复执行。
 6. 通过 `sudo docker compose ps` 和 `sudo docker compose logs --tail=100` 检查服务。
 
 Meta Webhook 地址为 `https://crm.zhongsai-steelstructure.com/api/integrations/meta/webhook`。

@@ -3,8 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
-import { join } from 'path';
-import * as express from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -28,16 +26,6 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig));
-
-  // 提供前端静态文件
-  const webDistPath = join(__dirname, '../../apps/web/dist');
-  app.use(express.static(webDistPath));
-  // 非API路径返回index.html（支持React Router前端路由）
-  const expressApp = app.getHttpAdapter().getInstance();
-  expressApp.get('/*', (req: any, res: any, next: any) => {
-    if (req.path.startsWith('/api')) return next();
-    res.sendFile(join(webDistPath, 'index.html'));
-  });
 
   await app.listen(config.get<number>('PORT', 3000), '0.0.0.0');
 }

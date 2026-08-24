@@ -2,6 +2,7 @@
   "name": "zhongsai-crm",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.19.0",
   "description": "中赛钢构海外广告线索 CRM",
   "scripts": {
     "dev": "nest start --watch",
