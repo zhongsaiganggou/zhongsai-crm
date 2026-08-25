@@ -170,12 +170,19 @@ export class LeadsService {
   }
 
   async assign(actorId: string, leadId: string, userId: string, reason?: string) {
-    const [lead, user] = await Promise.all([
+    const [lead, user, actor] = await Promise.all([
       this.prisma.lead.findUnique({ where: { id: leadId } }),
       this.prisma.user.findUnique({ where: { id: userId } }),
+      this.prisma.user.findUnique({ where: { id: actorId } }),
     ]);
     if (!lead) throw new NotFoundException('客户不存在');
-    if (!user || user.role !== UserRole.SALES || user.status !== UserStatus.ACTIVE) throw new BadRequestException('目标销售账号不可用');
+    const isActiveSales = user?.role === UserRole.SALES && user.status === UserStatus.ACTIVE;
+    const isAdminAssigningSelf = actor?.role === UserRole.ADMIN
+      && actor.status === UserStatus.ACTIVE
+      && user?.id === actor.id;
+    if (!user || (!isActiveSales && !isAdminAssigningSelf)) {
+      throw new BadRequestException('只能分配给启用中的销售或管理员本人');
+    }
     await this.prisma.$transaction([
       this.prisma.lead.update({ where: { id: leadId }, data: { assignedUserId: userId, assignmentState: AssignmentState.ASSIGNED } }),
       this.prisma.leadAssignment.create({ data: { leadId, fromUserId: lead.assignedUserId, toUserId: userId, assignmentMethod: AssignmentMethod.MANUAL, assignmentReason: reason, assignedById: actorId } }),
