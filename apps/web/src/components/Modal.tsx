@@ -4,12 +4,18 @@ import { useEffect, useRef, type ReactNode } from 'react';
 export function Modal({ open, title, children, onClose, footer }: { open: boolean; title: string; children: ReactNode; onClose: () => void; footer?: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
       if (event.key !== 'Tab' || !dialogRef.current) return;
       const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
       if (!focusable.length) return;
@@ -21,7 +27,7 @@ export function Modal({ open, title, children, onClose, footer }: { open: boolea
     document.addEventListener('keydown', handler);
     document.body.style.overflow = 'hidden';
     return () => { document.removeEventListener('keydown', handler); document.body.style.overflow = ''; previousFocus?.focus(); };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="modal-backdrop fixed inset-0 z-50 flex items-end justify-center bg-slate-950/30 p-0 backdrop-blur-[1px] sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
